@@ -7,35 +7,36 @@ import re
 app = Flask(__name__)
 CORS(app)
 
-COLOR_AZUL = 'style="color:#80BFFF"'
+COLOR_OPERATIVO = 'style="color:#80BFFF"'
+COLOR_INSTRUCCION = 'style="color:#40BFFF"'
 
 
 def extraer_lineas_orbat(cuerpo_html: str):
-    """Extrae líneas completas que contienen color azul (#80BFFF) sin modificar su contenido."""
+    """Extrae líneas completas que contienen colores de ORBAT (Operativo o Instrucción)."""
 
-    # Normalizar <br> como separador de línea
     html = re.sub(r'<br\s*/?>', '[[BR]]', cuerpo_html, flags=re.IGNORECASE)
-
-    # Separar por saltos de línea reales
     raw_lines = html.split('[[BR]]')
 
     orbat = []
+    tipo = None  # ← Nuevo
 
     for raw in raw_lines:
-        # Mantener solo líneas con el color azul
-        if COLOR_AZUL not in raw:
+        # Detecta si la línea contiene alguno de los dos colores
+        if COLOR_OPERATIVO in raw:
+            tipo = "Operativo"
+        elif COLOR_INSTRUCCION in raw:
+            tipo = "Instruccion"
+        else:
             continue
 
-        # Limpiar HTML de esa línea sin alterar el contenido visual
+        # Limpieza visual
         limpio = BeautifulSoup(raw, "html.parser").get_text().strip()
-
-        # Quitar posibles restos como "/>" o ">" al inicio/fin
         limpio = re.sub(r'^[/>\s]+|[/>\s]+$', '', limpio)
 
         if limpio:
             orbat.append(limpio)
 
-    return "\n".join(orbat).strip()
+    return "\n".join(orbat).strip(), tipo
 
 
 @app.route("/api/misiones")
@@ -78,13 +79,14 @@ def obtener_misiones(paginas=1):
                 contenido_completo = cuerpo.get_text("\n").strip()
 
                 # Extraer ORBAT por color
-                orbat = extraer_lineas_orbat(cuerpo_html)
+                orbat, tipo = extraer_lineas_orbat(cuerpo_html)
 
                 misiones.append({
                     "titulo": titulo,
                     "url": enlace,
                     "contenido_completo": contenido_completo,
-                    "orbat": orbat
+                    "orbat": orbat,
+                    "tipo": tipo
                 })
 
         return jsonify(misiones)
