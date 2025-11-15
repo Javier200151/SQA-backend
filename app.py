@@ -10,6 +10,12 @@ CORS(app)
 COLOR_OPERATIVO = 'style="color:#80BFFF"'
 COLOR_INSTRUCCION = 'style="color:#40BFFF"'
 
+INSTRUCCIONES_VALIDAS = {
+    "CEOD","CFAC","CIAC","CIAE","CIAM","CIBC","CIBI","CICO","CICU","CIET","CIEX",
+    "CIGR","CILA","CIMC","CIMG","CIMM","CIOE","CIOF","CIOR","CIOS","CIPC","CIPT",
+    "CREC","CUAV"
+}
+
 
 def extraer_lineas_orbat(cuerpo_html: str):
     """Extrae líneas completas que contienen colores de ORBAT (Operativo o Instrucción)."""
@@ -18,7 +24,7 @@ def extraer_lineas_orbat(cuerpo_html: str):
     raw_lines = html.split('[[BR]]')
 
     orbat = []
-    tipo = None  # ← Nuevo
+    tipo = None
 
     for raw in raw_lines:
         # Detecta si la línea contiene alguno de los dos colores
@@ -37,6 +43,28 @@ def extraer_lineas_orbat(cuerpo_html: str):
             orbat.append(limpio)
 
     return "\n".join(orbat).strip(), tipo
+
+
+def extraer_instruccion_desde_pasador(cuerpo_html: str):
+    """Extrae el código de instrucción a partir de la imagen de pasador en el HTML."""
+    soup = BeautifulSoup(cuerpo_html, "html.parser")
+
+    for img in soup.find_all("img"):
+        src = img.get("src", "")
+        if "/pasadores/" in src and "_pasador" in src:
+            try:
+                fragmento = src.split("/pasadores/")[1]
+                nombre = fragmento.split("_pasador")[0]
+            except (IndexError, ValueError):
+                continue
+
+            codigo = nombre.strip().upper()  # "cibi" -> "CIBI"
+
+            if codigo in INSTRUCCIONES_VALIDAS:
+                # Si prefieres en minúsculas, cambia a: return codigo.lower()
+                return codigo
+
+    return None
 
 
 @app.route("/api/misiones")
@@ -81,12 +109,18 @@ def obtener_misiones(paginas=1):
                 # Extraer ORBAT por color
                 orbat, tipo = extraer_lineas_orbat(cuerpo_html)
 
+                # Extraer instrucción si es de tipo Instruccion
+                instruccion = None
+                if tipo == "Instruccion":
+                    instruccion = extraer_instruccion_desde_pasador(cuerpo_html)
+
                 misiones.append({
                     "titulo": titulo,
                     "url": enlace,
                     "contenido_completo": contenido_completo,
                     "orbat": orbat,
-                    "tipo": tipo
+                    "tipo": tipo,
+                    "instruccion": instruccion
                 })
 
         return jsonify(misiones)
