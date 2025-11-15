@@ -3,6 +3,7 @@ from flask_cors import CORS
 import requests
 from bs4 import BeautifulSoup
 import re
+import unicodedata
 
 app = Flask(__name__)
 CORS(app)
@@ -11,14 +12,45 @@ COLOR_OPERATIVO = 'style="color:#80BFFF"'
 COLOR_INSTRUCCION = 'style="color:#40BFFF"'
 
 INSTRUCCIONES_VALIDAS = {
-    "CEOD","CFAC","CIAC","CIAE","CIAM","CIBC","CIBI","CICO","CICU","CIET","CIEX",
-    "CIGR","CILA","CIMC","CIMG","CIMM","CIOE","CIOF","CIOR","CIOS","CIPC","CIPT",
-    "CREC","CUAV"
+    "CEOD", "CFAC", "CIAC", "CIAE", "CIAM", "CIBC", "CIBI", "CICO", "CICU", "CIET", "CIEX",
+    "CIGR", "CILA", "CIMC", "CIMG", "CIMM", "CIOE", "CIOF", "CIOR", "CIOS", "CIPC", "CIPT",
+    "CREC", "CUAV"
 }
 
 
+def normalizar_texto(texto: str) -> str:
+    #Pasa el texto a minúsculas y le quita acentos para comparar más fácil.
+    if not texto:
+        return ""
+    texto = texto.lower()
+    return "".join(
+        c for c in unicodedata.normalize("NFD", texto)
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+def inferir_tipo_por_titulo(titulo: str):
+
+#    Usa el día de la semana en el título para decidir el tipo:
+#    - martes, viernes, sábado -> Operativo
+#    - lunes, miércoles, jueves -> Instruccion
+#    Si no encuentra nada, devuelve None.
+
+    t = normalizar_texto(titulo)
+
+    # Operativos: martes, viernes, sábado
+    if any(dia in t for dia in ("martes", "viernes", "sabado")):
+        return "Operativo"
+
+    # Instrucciones: lunes, miércoles, jueves
+    if any(dia in t for dia in ("lunes", "miercoles", "jueves")):
+        return "Instruccion"
+
+    return None
+
+
 def extraer_lineas_orbat(cuerpo_html: str):
-    """Extrae líneas completas que contienen colores de ORBAT (Operativo o Instrucción)."""
+    #Extrae líneas completas que contienen colores de ORBAT (Operativo o Instrucción).
 
     html = re.sub(r'<br\s*/?>', '[[BR]]', cuerpo_html, flags=re.IGNORECASE)
     raw_lines = html.split('[[BR]]')
@@ -46,7 +78,7 @@ def extraer_lineas_orbat(cuerpo_html: str):
 
 
 def extraer_instruccion_desde_pasador(cuerpo_html: str):
-    """Extrae el código de instrucción a partir de la imagen de pasador en el HTML."""
+    #Extrae el código de instrucción a partir de la imagen del pasador en el HTML.
     soup = BeautifulSoup(cuerpo_html, "html.parser")
 
     for img in soup.find_all("img"):
@@ -54,24 +86,24 @@ def extraer_instruccion_desde_pasador(cuerpo_html: str):
         if "/pasadores/" in src and "_pasador" in src:
             try:
                 fragmento = src.split("/pasadores/")[1]
-                nombre = fragmento.split("_pasador")[0]
+                nombre_raw = fragmento.split("_pasador")[0]
             except (IndexError, ValueError):
                 continue
 
-            codigo = nombre.strip().upper()  # "cibi" -> "CIBI"
+            base = nombre_raw.split("_")[0]
+            codigo = base.strip().upper()
 
             if codigo in INSTRUCCIONES_VALIDAS:
-                # Si prefieres en minúsculas, cambia a: return codigo.lower()
                 return codigo
 
     return None
+
 
 
 @app.route("/api/misiones")
 @app.route("/api/misiones/<int:paginas>")
 def obtener_misiones(paginas=1):
     try:
-        # Si no viene número, actuar como página 1
         if paginas is None or paginas < 1:
             paginas = 1
 
@@ -81,7 +113,10 @@ def obtener_misiones(paginas=1):
         # Recorrer desde página 1 hasta <paginas>
         for pagina in range(1, paginas + 1):
             start = (pagina - 1) * 25
-            foro_url = f"{base_url}viewforum.php?f=18&start={start}" if pagina > 1 else f"{base_url}viewforum.php?f=18"
+            if pagina > 1:
+                foro_url = f"{base_url}viewforum.php?f=18&start={start}"
+            else:
+                foro_url = f"{base_url}viewforum.php?f=18"
 
             res = requests.get(foro_url, headers={"User-Agent": "Mozilla/5.0"})
             soup = BeautifulSoup(res.text, "html.parser")
@@ -109,6 +144,11 @@ def obtener_misiones(paginas=1):
                 # Extraer ORBAT por color
                 orbat, tipo = extraer_lineas_orbat(cuerpo_html)
 
+                # Ajustar tipo según día de la semana
+                tipo_titulo = inferir_tipo_por_titulo(titulo)
+                if tipo_titulo:
+                    tipo = tipo_titulo
+
                 # Extraer instrucción si es de tipo Instruccion
                 instruccion = None
                 if tipo == "Instruccion":
@@ -133,8 +173,8 @@ def obtener_misiones(paginas=1):
 def home():
     return jsonify({
         "status": "OK",
-        "mensaje": "Backend Squad Alpha activo con extracción de ORBAT por color",
-        "uso": "/api/misiones o /api/misiones/<n>"
+        "mensaje": "Backend Squad Alpha activo con extracción de ORBAT",
+        "uso": "/api/misiones o /api/misiones/n donde n es el número de paginas en OSCAR - Operation Center"
     })
 
 
