@@ -103,66 +103,60 @@ def extraer_instruccion_desde_pasador(cuerpo_html: str):
 
 @app.route("/api/misiones")
 @app.route("/api/misiones/<int:paginas>")
-def obtener_misiones(paginas=1):
+@app.route("/api/mision/<int:pagina>")
+def obtener_mision_individual(pagina):
     try:
-        if paginas is None or paginas < 1:
-            paginas = 1
+        if pagina < 1:
+            pagina = 1
 
         base_url = "https://foro.squadalpha.es/"
         misiones = []
 
-        # Recorrer desde página 1 hasta <paginas>
-        for pagina in range(1, paginas + 1):
-            start = (pagina - 1) * 25
-            if pagina > 1:
-                foro_url = f"{base_url}viewforum.php?f=18&start={start}"
-            else:
-                foro_url = f"{base_url}viewforum.php?f=18"
+        start = (pagina - 1) * 25
+        if pagina > 1:
+            foro_url = f"{base_url}viewforum.php?f=18&start={start}"
+        else:
+            foro_url = f"{base_url}viewforum.php?f=18"
 
-            res = requests.get(foro_url, headers={"User-Agent": "Mozilla/5.0"})
-            soup = BeautifulSoup(res.text, "html.parser")
+        res = requests.get(foro_url, headers={"User-Agent": "Mozilla/5.0"})
+        soup = BeautifulSoup(res.text, "html.parser")
 
-            for tema in soup.select("a.topictitle"):
-                titulo = tema.text.strip()
-                href = tema.get("href")
-                if not href:
-                    continue
+        for tema in soup.select("a.topictitle"):
+            titulo = tema.text.strip()
+            href = tema.get("href")
+            if not href:
+                continue
 
-                enlace = base_url + href.lstrip("./")
+            enlace = base_url + href.lstrip("./")
 
-                post_res = requests.get(enlace, headers={"User-Agent": "Mozilla/5.0"})
-                post_soup = BeautifulSoup(post_res.text, "html.parser")
+            post_res = requests.get(enlace, headers={"User-Agent": "Mozilla/5.0"})
+            post_soup = BeautifulSoup(post_res.text, "html.parser")
 
-                cuerpo = post_soup.select_one(".postbody")
-                if not cuerpo:
-                    continue
+            cuerpo = post_soup.select_one(".postbody")
+            if not cuerpo:
+                continue
 
-                cuerpo_html = str(cuerpo)
+            cuerpo_html = str(cuerpo)
+            contenido_completo = cuerpo.get_text("\n").strip()
 
-                # Contenido completo plano
-                contenido_completo = cuerpo.get_text("\n").strip()
+            orbat, tipo = extraer_lineas_orbat(cuerpo_html)
 
-                # Extraer ORBAT por color
-                orbat, tipo = extraer_lineas_orbat(cuerpo_html)
+            tipo_titulo = inferir_tipo_por_titulo(titulo)
+            if tipo_titulo:
+                tipo = tipo_titulo
 
-                # Ajustar tipo según día de la semana
-                tipo_titulo = inferir_tipo_por_titulo(titulo)
-                if tipo_titulo:
-                    tipo = tipo_titulo
+            instruccion = None
+            if tipo == "Instruccion":
+                instruccion = extraer_instruccion_desde_pasador(cuerpo_html)
 
-                # Extraer instrucción si es de tipo Instruccion
-                instruccion = None
-                if tipo == "Instruccion":
-                    instruccion = extraer_instruccion_desde_pasador(cuerpo_html)
-
-                misiones.append({
-                    "titulo": titulo,
-                    "url": enlace,
-                    "contenido_completo": contenido_completo,
-                    "orbat": orbat,
-                    "tipo": tipo,
-                    "instruccion": instruccion
-                })
+            misiones.append({
+                "titulo": titulo,
+                "url": enlace,
+                "contenido_completo": contenido_completo,
+                "orbat": orbat,
+                "tipo": tipo,
+                "instruccion": instruccion
+            })
 
         return jsonify(misiones)
 
