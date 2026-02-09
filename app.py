@@ -19,8 +19,9 @@ INSTRUCCIONES_VALIDAS = {
 }
 
 
+# ===================== UTILIDADES =====================
+
 def normalizar_texto(texto: str) -> str:
-    #Pasa el texto a minúsculas y le quita acentos para comparar más fácil.
     if not texto:
         return ""
     texto = texto.lower()
@@ -31,28 +32,16 @@ def normalizar_texto(texto: str) -> str:
 
 
 def inferir_tipo_por_titulo(titulo: str):
-
-#    Usa el día de la semana en el título para decidir el tipo:
-#    - martes, viernes, sábado -> Operativo
-#    - lunes, miércoles, jueves -> Instruccion
-#    Si no encuentra nada, devuelve None.
-
     t = normalizar_texto(titulo)
 
-    # Operativos: martes, viernes, sábado
     if any(dia in t for dia in ("martes", "viernes", "sabado")):
         return "Operativo"
-
-    # Instrucciones: lunes, miércoles, jueves
     if any(dia in t for dia in ("lunes", "miercoles", "jueves")):
         return "Instruccion"
-
     return None
 
 
 def extraer_lineas_orbat(cuerpo_html: str):
-    #Extrae líneas completas que contienen colores de ORBAT (Operativo o Instrucción).
-
     html = re.sub(r'<br\s*/?>', '[[BR]]', cuerpo_html, flags=re.IGNORECASE)
     raw_lines = html.split('[[BR]]')
 
@@ -60,7 +49,6 @@ def extraer_lineas_orbat(cuerpo_html: str):
     tipo = None
 
     for raw in raw_lines:
-        # Detecta si la línea contiene alguno de los dos colores
         if COLOR_OPERATIVO in raw:
             tipo = "Operativo"
         elif COLOR_INSTRUCCION in raw:
@@ -68,7 +56,6 @@ def extraer_lineas_orbat(cuerpo_html: str):
         else:
             continue
 
-        # Limpieza visual
         limpio = BeautifulSoup(raw, "html.parser").get_text().strip()
         limpio = re.sub(r'^[/>\s]+|[/>\s]+$', '', limpio)
 
@@ -79,7 +66,6 @@ def extraer_lineas_orbat(cuerpo_html: str):
 
 
 def extraer_instruccion_desde_pasador(cuerpo_html: str):
-    #Extrae el código de instrucción a partir de la imagen del pasador en el HTML.
     soup = BeautifulSoup(cuerpo_html, "html.parser")
 
     for img in soup.find_all("img"):
@@ -88,78 +74,97 @@ def extraer_instruccion_desde_pasador(cuerpo_html: str):
             try:
                 fragmento = src.split("/pasadores/")[1]
                 nombre_raw = fragmento.split("_pasador")[0]
-            except (IndexError, ValueError):
+                codigo = nombre_raw.split("_")[0].upper()
+                if codigo in INSTRUCCIONES_VALIDAS:
+                    return codigo
+            except Exception:
                 continue
-
-            base = nombre_raw.split("_")[0]
-            codigo = base.strip().upper()
-
-            if codigo in INSTRUCCIONES_VALIDAS:
-                return codigo
-
     return None
 
 
+# ===================== CORE =====================
+
+def extraer_misiones_de_una_pagina(pagina: int):
+    if pagina < 1:
+        pagina = 1
+
+    base_url = "https://foro.squadalpha.es/"
+    start = (pagina - 1) * 25
+
+    foro_url = (
+        f"{base_url}viewforum.php?f=18&start={start}"
+        if pagina > 1
+        else f"{base_url}viewforum.php?f=18"
+    )
+
+    res = requests.get(foro_url, headers={"User-Agent": "Mozilla/5.0"})
+    soup = BeautifulSoup(res.text, "html.parser")
+
+    misiones = []
+
+    for tema in soup.select("a.topictitle"):
+        titulo = tema.text.strip()
+        href = tema.get("href")
+        if not href:
+            continue
+
+        enlace = base_url + href.lstrip("./")
+
+        post_res = requests.get(enlace, headers={"User-Agent": "Mozilla/5.0"})
+        post_soup = BeautifulSoup(post_res.text, "html.parser")
+
+        cuerpo = post_soup.select_one(".postbody")
+        if not cuerpo:
+            continue
+
+        cuerpo_html = str(cuerpo)
+        contenido_completo = cuerpo.get_text("\n").strip()
+
+        orbat, tipo = extraer_lineas_orbat(cuerpo_html)
+
+        tipo_titulo = inferir_tipo_por_titulo(titulo)
+        if tipo_titulo:
+            tipo = tipo_titulo
+
+        instruccion = None
+        if tipo == "Instruccion":
+            instruccion = extraer_instruccion_desde_pasador(cuerpo_html)
+
+        misiones.append({
+            "titulo": titulo,
+            "url": enlace,
+            "contenido_completo": contenido_completo,
+            "orbat": orbat,
+            "tipo": tipo,
+            "instruccion": instruccion
+        })
+
+    return misiones
+
+
+# ===================== ENDPOINTS =====================
 
 @app.route("/api/misiones")
 @app.route("/api/misiones/<int:paginas>")
-@app.route("/api/mision/<int:pagina>")
-def obtener_mision_individual(pagina):
+def obtener_misiones(paginas=1):
     try:
-        if pagina < 1:
-            pagina = 1
+        if paginas < 1:
+            paginas = 1
 
-        base_url = "https://foro.squadalpha.es/"
-        misiones = []
+        todas = []
+        for p in range(1, paginas + 1):
+            todas.extend(extraer_misiones_de_una_pagina(p))
 
-        start = (pagina - 1) * 25
-        if pagina > 1:
-            foro_url = f"{base_url}viewforum.php?f=18&start={start}"
-        else:
-            foro_url = f"{base_url}viewforum.php?f=18"
+        return jsonify(todas)
 
-        res = requests.get(foro_url, headers={"User-Agent": "Mozilla/5.0"})
-        soup = BeautifulSoup(res.text, "html.parser")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-        for tema in soup.select("a.topictitle"):
-            titulo = tema.text.strip()
-            href = tema.get("href")
-            if not href:
-                continue
 
-            enlace = base_url + href.lstrip("./")
-
-            post_res = requests.get(enlace, headers={"User-Agent": "Mozilla/5.0"})
-            post_soup = BeautifulSoup(post_res.text, "html.parser")
-
-            cuerpo = post_soup.select_one(".postbody")
-            if not cuerpo:
-                continue
-
-            cuerpo_html = str(cuerpo)
-            contenido_completo = cuerpo.get_text("\n").strip()
-
-            orbat, tipo = extraer_lineas_orbat(cuerpo_html)
-
-            tipo_titulo = inferir_tipo_por_titulo(titulo)
-            if tipo_titulo:
-                tipo = tipo_titulo
-
-            instruccion = None
-            if tipo == "Instruccion":
-                instruccion = extraer_instruccion_desde_pasador(cuerpo_html)
-
-            misiones.append({
-                "titulo": titulo,
-                "url": enlace,
-                "contenido_completo": contenido_completo,
-                "orbat": orbat,
-                "tipo": tipo,
-                "instruccion": instruccion
-            })
-
-        return jsonify(misiones)
-
+@app.route("/api/mision/<int:pagina>")
+def obtener_mision(pagina):
+    try:
+        return jsonify(extraer_misiones_de_una_pagina(pagina))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -168,11 +173,14 @@ def obtener_mision_individual(pagina):
 def home():
     return jsonify({
         "status": "OK",
-        "mensaje": "Backend Squad Alpha activo con extracción de ORBAT",
-        "uso": "/api/misiones o /api/misiones/n donde n es el número de paginas en OSCAR - Operation Center"
+        "uso": {
+            "/api/misiones": "Primera página",
+            "/api/misiones/n": "Páginas acumuladas",
+            "/api/mision/n": "Solo la página n"
+        }
     })
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, debug=True)
