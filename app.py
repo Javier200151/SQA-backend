@@ -5,6 +5,10 @@ from bs4 import BeautifulSoup
 import re
 import unicodedata
 import os
+import csv
+import io
+
+SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTuQORinglzn8kO3ywB2K6YYDZJCgaEWwBUlhNhBbg7uEyyku8tC7sCN1Um1BgFyT_oqqvqL-4IKROB/pub?gid=259895026&single=true&output=csv"
 
 app = Flask(__name__)
 CORS(app)
@@ -167,7 +171,36 @@ def obtener_mision(pagina):
         return jsonify(extraer_misiones_de_una_pagina(pagina))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+        
+@app.route("/api/miembros")
+def api_miembros():
+    try:
+        r = requests.get(SHEET_CSV_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+        r.raise_for_status()
 
+        # Parse CSV -> dict {nombre_normalizado: fecha_string}
+        text = r.text
+        f = io.StringIO(text)
+        reader = csv.reader(f)
+
+        rows = list(reader)
+        if not rows:
+            return jsonify({"error": "CSV vacío"}), 500
+
+        miembros = {}
+        # Saltamos cabecera (fila 0)
+        for row in rows[1:]:
+            if len(row) < 2:
+                continue
+            nombre = (row[0] or "").strip()
+            fecha = (row[1] or "").strip()
+            if nombre and fecha:
+                miembros[normalizar_texto(nombre)] = fecha
+
+        return jsonify(miembros)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/")
 def home():
